@@ -5,6 +5,7 @@ on:
     branches: [main]
     paths:
       - '.github/workflows/publish-ipa.yml'
+      - 'WaffleStore.xcodeproj/project.pbxproj'
   workflow_dispatch:
 
 permissions:
