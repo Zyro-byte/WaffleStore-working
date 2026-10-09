@@ -25,10 +25,13 @@ extension AppData {
                 // Reject invalid codes before creating a guest or contacting Apple.
                 _ = try TwoFactorAuthentication.normalize(verification)
                 let prepared: PreparedAppleLogin
-                if let existing = preparedAppleLogin, existing.canReuse(for: email) {
+                if verification.isEmpty, let existing = preparedAppleLogin, existing.canReuse(for: email) {
                     prepared = existing
                 } else {
-                    if let existing = preparedAppleLogin { await existing.close() }
+                    // ipatool starts a fresh login for the supplied 2FA code. Do not reuse
+                // the pre-challenge SAP guest, network connections or endpoint state.
+                // A new preparation retains only validated challenge cookies.
+                if let existing = preparedAppleLogin { await existing.close() }
                     preparedAppleLogin = nil
                     prepared = try PreparedAppleLogin(email: email, cookies: challengeCookies)
                     preparedAppleLogin = prepared
