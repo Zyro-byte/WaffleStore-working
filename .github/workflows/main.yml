@@ -71,7 +71,8 @@ jobs:
             fi
           done < "$RUNNER_TEMP/commits.txt"
 
-      - name: Push changes
+      
+      - name: Rebase and push changes
         shell: bash
         env:
           SYNC_TOKEN: ${{ secrets.SYNC_TOKEN }}
@@ -79,13 +80,21 @@ jobs:
           set -euo pipefail
 
           if [ -z "$SYNC_TOKEN" ]; then
-            echo "Missing SYNC_TOKEN secret"
+            echo "ERROR: Missing SYNC_TOKEN secret"
             exit 1
           fi
 
+          # Fetch latest changes from GitHub
+          git fetch origin "${{ github.ref_name }}"
+
+          # Replay PR commits on top of latest main
+          git rebase "origin/${{ github.ref_name }}"
+
+          # Authenticate using PAT
           AUTH=$(printf 'x-access-token:%s' "$SYNC_TOKEN" \
             | base64 -w 0)
 
+          # Push without force
           git -c \
             "http.https://github.com/.extraheader=AUTHORIZATION: basic $AUTH" \
             push origin "HEAD:${{ github.ref_name }}"
