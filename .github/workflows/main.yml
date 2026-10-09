@@ -1,0 +1,91 @@
+
+name: Sync WaffleStore PR #5
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: sync-wafflestore-pr5
+  cancel-in-progress: false
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout fork
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          persist-credentials: true
+
+      - name: Configure Git
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email \
+            "41898282+github-actions[bot]@users.noreply.github.com"
+
+      - name: Fetch upstream PR #5
+        run: |
+          git remote add upstream \
+            https://github.com/nxtcoreee3/WaffleStore.git
+
+          git fetch upstream \
+            refs/pull/5/head:refs/remotes/upstream/pr-5
+
+      - name: Apply PR commits
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          echo "Getting PR #5 commits..."
+
+          gh api --paginate \
+            "repos/nxtcoreee3/WaffleStore/pulls/5/commits?per_page=100" \
+            --jq '.[].sha' > "$RUNNER_TEMP/commits.txt"
+
+          if [ ! -s "$RUNNER_TEMP/commits.txt" ]; then
+            echo "No commits found"
+            exit 1
+          fi
+
+          while IFS= read -r SHA; do
+            echo "Applying commit: $SHA"
+
+            # Fetch commit if necessary
+            git fetch upstream "$SHA"
+
+            # Skip commits already in history
+            if git merge-base --is-ancestor "$SHA" HEAD; then
+              echo "Already present, skipping"
+              continue
+            fi
+
+            if git cherry-pick "$SHA"; then
+              echo "Commit applied successfully"
+            else
+              # Skip commits with no new changes
+              if [ -z "$(git ls-files -u)" ] && \
+                 git diff --cached --quiet; then
+                echo "Empty commit, skipping"
+                git cherry-pick --skip
+              else
+                echo "Cherry-pick conflict: $SHA"
+                git cherry-pick --abort
+                exit 1
+              fi
+            fi
+          done < "$RUNNER_TEMP/commits.txt"
+
+      - name: Push changes
+        run: |
+          git push origin HEAD:${{ github.ref_name }}
+
+      - name: Sync completed
+        run: |
+          echo "PR #5 commits synchronized!"
