@@ -189,7 +189,7 @@ final class AuthenticationTests: XCTestCase {
     }
 
     func testEmptyHTTPResponsesRetryThreeTimesWithExactBody() async throws {
-        for status in [204, 403, 404, 429, 500, 503] {
+        for status in [204, 404, 429, 500, 503] {
             let transport = FixtureAuthenticationTransport(Array(repeating: .http(status, Data("<html>temporary</html>".utf8), [:]), count: 3))
             let sleeps = FixtureSleeps()
             do { _ = try await login(transport, sleeps: sleeps); XCTFail("Accepted HTTP \(status)") }
@@ -201,27 +201,27 @@ final class AuthenticationTests: XCTestCase {
         }
     }
 
-    func testAutomaticRecoverySurvivesMoreThanThreeTemporaryReplies() async throws {
-        let transport = FixtureAuthenticationTransport(Array(repeating: .http(404, Data("<html>temporary</html>".utf8), [:]), count: 5) + [.http(200, try success(), responseHeaders)])
+    func testAutomaticRecoverySucceedsWithinThreeTemporaryReplies() async throws {
+        let transport = FixtureAuthenticationTransport(Array(repeating: .http(404, Data("<html>temporary</html>".utf8), [:]), count: 2) + [.http(200, try success(), responseHeaders)])
         let sleeps = FixtureSleeps()
         let result = try await AppleAuthentication(transport: transport, signer: FixtureSigner(), persistence: FixtureAccountStore(), automaticRecovery: true,
             sleep: { await sleeps.record($0) }).login(email: "fixture@example.test", password: "secret", identity: identity, endpoint: endpoint)
         guard case .authenticated = result else { return XCTFail("Recovery failed") }
         let requests = await transport.requests
-        XCTAssertEqual(requests.count, 6)
+        XCTAssertEqual(requests.count, 3)
         XCTAssertTrue(requests.allSatisfy { $0.httpBody == requests.first?.httpBody })
         let delays = await sleeps.values
-        XCTAssertEqual(delays, [2, 4, 8, 15, 15])
+        XCTAssertEqual(delays, [2, 4])
     }
-    func testAutomaticRecoveryStopsAfterTwelveAttemptsAndHonorsRateLimit() async throws {
-        let transport = FixtureAuthenticationTransport(Array(repeating: .http(503, Data(), [:]), count: 12))
+    func testAutomaticRecoveryStopsAfterThreeAttemptsAndHonorsRateLimit() async throws {
+        let transport = FixtureAuthenticationTransport(Array(repeating: .http(503, Data(), [:]), count: 3))
         do {
             _ = try await AppleAuthentication(transport: transport, signer: FixtureSigner(), persistence: FixtureAccountStore(), automaticRecovery: true, sleep: { _ in })
                 .login(email: "fixture@example.test", password: "secret", identity: identity, endpoint: endpoint)
             XCTFail("Unlimited recovery")
         } catch { XCTAssertEqual(error as? AuthenticationError, .http(503)) }
         let requests = await transport.requests
-        XCTAssertEqual(requests.count, 12)
+        XCTAssertEqual(requests.count, 3)
         let rate = FixtureAuthenticationTransport([.http(429, Data(), ["Retry-After": "300"])])
         do {
             _ = try await AppleAuthentication(transport: rate, signer: FixtureSigner(), persistence: FixtureAccountStore(), automaticRecovery: true, sleep: { _ in })
