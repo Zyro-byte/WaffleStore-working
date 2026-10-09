@@ -74,8 +74,9 @@ public enum AuthenticationEndpoint {
         catch { throw AuthenticationError.invalidRedirect }
         let host = url.host?.lowercased() ?? ""
         let path = "/WebObjects/MZFinance.woa/wa/authenticate"
-        guard (host == "buy.itunes.apple.com" || host.hasSuffix("-buy.itunes.apple.com")),
-              [path, path + "/"].contains(url.path),
+        let legacy = (host == "buy.itunes.apple.com" || host.hasSuffix("-buy.itunes.apple.com")) && [path, path + "/"].contains(url.path)
+        let native = host == "auth.itunes.apple.com" && ["/auth/v1/native/fast", "/auth/v1/native/fast/"].contains(url.path)
+        guard (legacy || native), url.query == nil,
               URLComponents(url: url, resolvingAgainstBaseURL: false)?.percentEncodedPath == url.path
         else { throw AuthenticationError.invalidRedirect }
         return url
