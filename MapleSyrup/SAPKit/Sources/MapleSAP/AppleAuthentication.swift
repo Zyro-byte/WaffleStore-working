@@ -73,7 +73,9 @@ public struct AppleAuthentication {
                     try await Task.sleep(nanoseconds: UInt64($0 * 1_000_000_000))
                 }) {
         self.transport = transport; self.signer = signer; self.persistence = persistence; self.sleep = sleep; self.diagnostic = diagnostic; self.now = now
-        recoveryAttempts = automaticRecovery ? 12 : 3
+        // Match ipatool's bounded handling of transient Apple edge responses.
+        // Twelve identical signed retries cannot repair a missing Store backend.
+        recoveryAttempts = 3
         recoveryWindow = automaticRecovery ? 120 : nil
     }
 
@@ -179,12 +181,14 @@ public struct AppleAuthentication {
                 await diagnostic(await transport.cookieDiagnostic(for: endpoint))
                 let (data, response) = try await transport.send(request)
                 await diagnostic(ResponseDiagnostic.response(data, status: response.statusCode, scope: "authentication", attempt: attempt, secrets: secrets))
+                // Fixed boolean markers only: no hostnames, Location values, request IDs or tokens.
+                await diagnostic("authentication-backend: originating-system-present=\(response.value(forHTTPHeaderField: "apple-originating-system") != nil); responding-instance-present=\(response.value(forHTTPHeaderField: "x-responding-instance") != nil); correlation-present=\(response.value(forHTTPHeaderField: "x-apple-jingle-correlation-key") != nil)")
                 guard data.count <= SAPProtocol.maximumBodySize else { throw SAPError.oversizedResponse }
                 let result = try? ApplePlist.dictionary(data)
                 let populated = result.map { !string($0["failureType"]).isEmpty || !string($0["customerMessage"]).isEmpty || !string($0["passwordToken"]).isEmpty } ?? false
                 let status = response.statusCode
                 if populated || (300..<400).contains(status) || status == 200 { return (data, response) }
-                guard [204, 403, 404, 429].contains(status) || status / 100 == 5 else { throw AuthenticationError.invalidResponse(status) }
+                guard [204, 404, 429].contains(status) || status / 100 == 5 else { throw AuthenticationError.invalidResponse(status) }
                 guard attempt < recoveryAttempts else { throw status == 429 ? AuthenticationError.rateLimited : AuthenticationError.http(status) }
                 let delay = try retryDelay(response.value(forHTTPHeaderField: "Retry-After"), attempt: attempt)
                 if let deadline, now().addingTimeInterval(delay) >= deadline { throw status == 429 ? AuthenticationError.rateLimited : AuthenticationError.http(status) }
