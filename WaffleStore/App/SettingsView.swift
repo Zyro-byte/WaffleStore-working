@@ -1,15 +1,14 @@
 import SwiftUI
 import PartyUI
-import UniformTypeIdentifiers
 
 struct SettingsView: View {
+    var embedded = false
     @EnvironmentObject var appData: AppData
     @Environment(\.dismiss) private var dismiss
     @Environment(\.openURL) private var openURL
     
     @AppStorage("autoCleanApp") var autoCleanApp: Bool = true
     @StateObject private var localizationManager = LocalizationManager.shared
-    @State private var showFileImporter = false
     
     private var appVersionString: String {
         let version = Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "?"
@@ -71,72 +70,24 @@ struct SettingsView: View {
                     .pickerStyle(.menu)
                 }
                 
-                Section(header: HeaderLabel(text: "Data".localized, icon: "loupe"), footer: Text("Storage Warning".localized)) {
-                    VStack {
-                        Button(action: {
-                            let tempDir = FileManager.default.temporaryDirectory
-                            let tempIPAURL = tempDir.appendingPathComponent("app.ipa")
-                            presentShareSheet(with: tempIPAURL)
-                        }) {
-                            ButtonLabel(text: "Export IPA".localized, icon: "arrow.up.doc")
-                        }
-                        .buttonStyle(TranslucentButtonStyle())
-                        .disabled(!appData.hasAppBeenServed)
-                        Button(action: {
-                            cleanUp()
-                        }) {
-                            ButtonLabel(text: "Clean Documents".localized, icon: "trash")
-                        }
-                        .buttonStyle(TranslucentButtonStyle())
-                        
-                        HStack {
-                            Button(action: {
-                                if let url = DowngradeHistoryStore.exportToJSON() {
-                                    presentShareSheet(with: url)
-                                }
-                            }) {
-                                ButtonLabel(text: "Export History".localized, icon: "square.and.arrow.up")
-                            }
-                            .buttonStyle(TranslucentButtonStyle())
-                            
-                            Button(action: {
-                                showFileImporter = true
-                            }) {
-                                ButtonLabel(text: "Import History".localized, icon: "square.and.arrow.down")
-                            }
-                            .buttonStyle(TranslucentButtonStyle())
-                        }
-                    }
-                }
-                .fileImporter(isPresented: $showFileImporter, allowedContentTypes: [.json]) { result in
-                    switch result {
-                    case .success(let url):
-                        if url.startAccessingSecurityScopedResource() {
-                            defer { url.stopAccessingSecurityScopedResource() }
-                            if let importedHistory = DowngradeHistoryStore.importFromJSON(at: url) {
-                                appData.downgradeHistory = importedHistory
-                            }
-                        }
-                    case .failure(let error):
-                        print("Failed to import history: \(error)")
-                    }
-                }
                 Section(header: HeaderLabel(text: "Credits".localized, icon: "star")) {
                     LinkCreditCell(image: Image("mineek"), name: "mineek", description: "Original creator of MuffinStore Jailed.".localized, url: "https://github.com/mineek")
                     LinkCreditCell(image: Image("lunginspector"), name: "lunginspector", description: "Original creator of PancakeStore.".localized, url: "https://github.com/lunginspector")
                     LinkCreditCell(image: Image("skadz"), name: "skadz", description: "Original creator of PancakeStore.".localized, url: "https://github.com/skadz108")
                     LinkCreditCell(image: Image("nxtcoreee3"), name: "nxtcoreee3", description: "UI changes and feature improvements.".localized, url: "https://github.com/nxtcoreee3")
+                    LinkCreditCell(image: Image(systemName: "person.crop.circle"), name: "boierito", description: "Revival coordination and iOS 27 device testing.", url: "https://github.com/boierito")
+                    LinkCreditCell(image: Image(systemName: "shippingbox"), name: "majd / ipatool", description: "MIT-licensed reference for SAP, Apple authentication and App Store downloads.", url: "https://github.com/majd/ipatool")
                 }
             }
             .navigationTitle("Settings".localized)
             .toolbar {
-                ToolbarItem(placement: .topBarTrailing) {
+                if !embedded { ToolbarItem(placement: .topBarTrailing) {
                     Button(action: {
                         dismiss()
                     }) {
                         Image(systemName: "xmark")
                     }
-                }
+                } }
             }
         }
     }

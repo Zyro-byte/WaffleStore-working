@@ -2,166 +2,96 @@ import SwiftUI
 import PartyUI
 
 struct ContentView: View {
-    @State private var hasShownWelcome: Bool = false
-    @State private var showLogs: Bool = true
-    @State private var showSettingsView: Bool = false
-    @State private var showSearchView: Bool = false
-    @State private var showHistoryView: Bool = false
-    @State private var showFavouritesView: Bool = false
-    
     @EnvironmentObject var appData: AppData
-    @StateObject private var localizationManager = LocalizationManager.shared
-    
+    @State private var confirmLogout = false
+    @State private var showLogs = false
+
     var body: some View {
-        Group {
-            if UIDevice.current.userInterfaceIdiom == .pad {
-                NavigationSplitView(sidebar: {
-                    List {
-                        LogsSection
-                        NavigationButtons()
-                    }
-                    .navigationTitle("WaffleStore")
-                }) {
-                    List {
-                        if !appData.isAuthenticated {
-                            LoginSection
-                        } else {
-                            if appData.isDowngrading {
-                                AppInfoSection
-                            } else {
-                                InputAppSection
-                            }
-                        }
-                    }
-                    .toolbar {
-                        ToolbarItem(placement: .topBarTrailing) {
-                            AppMenu(showHistoryView: $showHistoryView, showFavouritesView: $showFavouritesView)
-                        }
-                        ToolbarItem(placement: .topBarTrailing) {
-                            Button(action: {
-                                showSettingsView.toggle()
-                            }) {
-                                Image(systemName: "gear")
-                            }
-                        }
-                    }
-                }
-            } else {
-                NavigationStack {
-                    List {
-                        LogsSection
-                        if !appData.isAuthenticated {
-                            LoginSection
-                        } else {
-                            if appData.isDowngrading {
-                                AppInfoSection
-                            } else {
-                                InputAppSection
-                            }
-                        }
-                    }
-                    .navigationTitle("WaffleStore")
-                    .toolbar {
-                        ToolbarItem(placement: .topBarTrailing) {
-                            AppMenu(showHistoryView: $showHistoryView, showFavouritesView: $showFavouritesView)
-                        }
-                        ToolbarItem(placement: .topBarTrailing) {
-                            Button(action: {
-                                showSettingsView.toggle()
-                            }) {
-                                Image(systemName: "gear")
-                            }
-                        }
-                    }
-                    .safeAreaInset(edge: .bottom) {
-                        NavigationButtons()
-                            .modifier(OverlayBackground())
-                    }
-                }
-            }
+        TabView(selection: $appData.selectedTab) {
+            AppSearchView(embedded: true)
+                .tabItem { Label("Search", systemImage: "magnifyingglass") }.tag(AppTab.search)
+            DownloadedAppsView(embedded: true)
+                .tabItem { Label("Downloads", systemImage: "square.and.arrow.down") }.tag(AppTab.downloads)
+            FavouritesView(embedded: true)
+                .tabItem { Label("Favourites".localized, systemImage: "star") }.tag(AppTab.favourites)
+            account
+                .tabItem { Label("Account", systemImage: "person.crop.circle") }.tag(AppTab.account)
+            SettingsView(embedded: true)
+                .tabItem { Label("Settings".localized, systemImage: "gearshape") }.tag(AppTab.settings)
         }
-        .sheet(isPresented: $showSettingsView) {
-            SettingsView()
-        }
-        .sheet(isPresented: $showSearchView) {
-            AppSearchView()
-        }
-        .sheet(isPresented: $showHistoryView) {
-            DowngradeHistoryView()
-        }
-        .sheet(isPresented: $showFavouritesView) {
-            FavouritesView()
-        }
-        .onAppear {
-            appData.isAuthenticated = EncryptedKeychainWrapper.hasAuthInfo()
-            print("Found \(appData.isAuthenticated ? "auth" : "no auth") info in keychain")
-            if appData.isAuthenticated {
-                appData.applicationStatus = "Ready to Downgrade!".localized
-                appData.applicationIcon = "checkmark.circle.fill"
-                appData.applicationIconColor = .primary
-                guard let authInfo = EncryptedKeychainWrapper.getAuthInfo() else {
-                    print("Failed to get auth info from keychain, logging out")
-                    appData.isAuthenticated = false
-                    EncryptedKeychainWrapper.nuke()
-                    EncryptedKeychainWrapper.generateAndStoreKey()
-                    return
-                }
-                appData.appleId = authInfo["appleId"]! as! String
-                appData.password = authInfo["password"]! as! String
-                appData.ipaTool = IPATool(appleId: appData.appleId, password: appData.password)
-                let ret = appData.ipaTool?.authenticate()
-                print("Re-authenticated \(ret! ? "successfully" : "unsuccessfully")")
-            } else {
-                print("No auth info found in keychain, setting up by generating a key in SEP")
-                EncryptedKeychainWrapper.generateAndStoreKey()
+        .sheet(isPresented: $appData.showStoreVersions) { StoreVersionsView() }
+        .sheet(item: $appData.downloadReady) { DownloadReadyView(record: $0) }
+        .sheet(item: $appData.installationRequest) { OTAInstallationView(record: $0, startImmediately: true) }
+        .onAppear { appData.restoreStoreAccount(); appData.restoreDownloadedIPA() }
+        .onChange(of: appData.isAuthenticated) { authenticated in
+            if authenticated, appData.openVersionsAfterLogin {
+                appData.openVersionsAfterLogin = false
+                appData.openAppSelection(appData.appLink, country: appData.selectedCatalogCountry)
             }
         }
     }
-    
-    private var LogsSection: some View {
-        Section(header: HeaderLabel(text: "Logs".localized, icon: "terminal"), footer: Text("Originally created by mineek with QoL improvements and backend fixes made by jailbreak.party with further upgrades by nxtcoreee3.".localized)) {
-            VStack {
-                TerminalHeader(text: appData.applicationStatus, icon: appData.applicationIcon, color: appData.applicationIconColor)
-                if appData.showsDowngradeProgress {
-                    VStack(alignment: .leading, spacing: 6) {
-                        ProgressView(value: appData.downgradeProgress)
-                        HStack {
-                            Text(appData.downgradeProgressDetail)
-                            Spacer()
-                            Text("\(Int(appData.downgradeProgress * 100))%")
-                        }
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
+
+    private var account: some View {
+        NavigationStack {
+            List {
+                if appData.isAuthenticated {
+                    Section("Signed in") {
+                        Label(appData.appleId, systemImage: "person.crop.circle")
+                        LabeledContent("Account region", value: appData.accountCountry.uppercased())
                     }
-                    .padding(.horizontal, 2)
+                    Section {
+                        Button("Sign out", role: .destructive) { confirmLogout = true }
+                            .disabled(appData.isAuthenticating || appData.isDowngrading || appData.storeRequestCount > 0 || appData.showStoreVersions)
+                    } footer: {
+                        Text("Signing out keeps your favourites and downloaded IPAs.")
+                    }
+                } else {
+                    LoginSection
+                    Section { NavigationButtons() }
                 }
-                LogView()
-                    .modifier(TerminalPlatter())
+                Section {
+                    DisclosureGroup("Activity log", isExpanded: $showLogs) { LogView() }
+                }
+            }
+            .navigationTitle("Apple account")
+            .navigationBarTitleDisplayMode(.inline)
+            .alert("Sign out of Apple account?", isPresented: $confirmLogout) {
+                Button("Sign out", role: .destructive) {
+                    appData.openVersionsAfterLogin = false
+                    appData.logoutStoreAccount()
+                }
+                Button("Cancel", role: .cancel) {}
+            } message: {
+                Text("Your favourites and downloaded IPAs will stay on this device.")
             }
         }
     }
-    
+
     private var LoginSection: some View {
         Group {
-            Section(header: HeaderLabel(text: "Login".localized, icon: "icloud"), footer: Text("")) {
+            Section(header: HeaderLabel(text: "Login".localized, icon: "icloud"), footer: Text("Sign in to choose and download App Store versions.")) {
                 VStack {
                     TextField("Apple ID".localized, text: $appData.appleId)
                         .modifier(TextFieldBackground())
-                        .disabled(appData.hasSent2FACode)
+                        .disabled(appData.hasSent2FACode || appData.isAuthenticating)
                         .autocorrectionDisabled()
                         .textInputAutocapitalization(.never)
+                        .keyboardType(.emailAddress)
+                        .textContentType(.username)
                     
                     HStack {
                         if appData.showPassword {
                             TextField("Password".localized, text: $appData.password)
+                                .textContentType(.password)
                                 .modifier(TextFieldBackground())
-                                .disabled(appData.hasSent2FACode)
+                                .disabled(appData.hasSent2FACode || appData.isAuthenticating)
                                 .autocorrectionDisabled()
                                 .textInputAutocapitalization(.never)
                         } else {
                             SecureField("Password".localized, text: $appData.password)
+                                .textContentType(.password)
                                 .modifier(TextFieldBackground())
-                                .disabled(appData.hasSent2FACode)
+                                .disabled(appData.hasSent2FACode || appData.isAuthenticating)
                                 .autocorrectionDisabled()
                                 .textInputAutocapitalization(.never)
                         }
@@ -175,165 +105,39 @@ struct ContentView: View {
                         .buttonStyle(TranslucentButtonStyle(useFullWidth: false))
                     }
                 }
+                if appData.isAuthenticating {
+                    HStack(spacing: 12) {
+                        ProgressView()
+                        VStack(alignment: .leading, spacing: 4) {
+                            Text(appData.applicationStatus).font(.subheadline)
+                            if !appData.authenticationRecovery.isEmpty {
+                                Text(appData.authenticationRecovery).font(.caption).foregroundStyle(.secondary)
+                            }
+                        }
+                        Spacer(minLength: 0)
+                        Button("Cancel") { appData.cancelAppleLogin() }
+                            .buttonStyle(.borderless)
+                    }
+                    .accessibilityElement(children: .contain)
+                }
+                if !appData.authenticationError.isEmpty {
+                    Text(appData.authenticationError).font(.subheadline).foregroundStyle(.red).textSelection(.enabled)
+                }
             }
-            
             if appData.hasSent2FACode {
                 Section(header: HeaderLabel(text: "Verification Code".localized, icon: "key.viewfinder")) {
                     TextField("2FA Code".localized, text: $appData.code)
                         .modifier(TextFieldBackground())
                         .keyboardType(.numberPad)
+                        .textContentType(.oneTimeCode)
+                        .disabled(appData.isAuthenticating)
+                    Button("Use another Apple ID") { appData.cancelAppleLogin() }
+                        .disabled(appData.isAuthenticating)
                 }
             }
         }
     }
     
-    private var InputAppSection: some View {
-        Section(header: HeaderLabel(text: "Downgrade App".localized, icon: "arrow.down.app"), footer: Text("To downgrade an app, it must have been purchased on your account at some point in the past (when the app has a cloud icon next to it). It must also not be installed on your device currently, but you can offload it.".localized)) {
-            VStack(spacing: 12) {
-                TextField("App Store Link".localized, text: $appData.appLink)
-                    .modifier(TextFieldBackground())
-                    .autocorrectionDisabled()
-                    .textInputAutocapitalization(.never)
-                
-                Button(action: {
-                    Haptic.shared.play(.soft)
-                    showSearchView.toggle()
-                }) {
-                    ButtonLabel(text: "Search App Store".localized, icon: "magnifyingglass")
-                }
-                .buttonStyle(TranslucentButtonStyle())
-            }
-        }
-    }
-    
-    private var AppInfoSection: some View {
-        Section(header: HeaderLabel(text: "App Info".localized, icon: "info.circle")) {
-            ItemInfoCell(label: "App Link".localized, icon: "link", text: appData.appLink)
-            ItemInfoCell(label: "App Bundle ID".localized, icon: "shippingbox", text: appData.appBundleID)
-
-            ItemInfoCell(label: "Target App Version".localized, icon: "arrow.down.app", text: appData.appVersion)
-        }
-    }
-    
-}
-
-struct AppMenu: View {
-    @EnvironmentObject var appData: AppData
-    @Binding var showHistoryView: Bool
-    @Binding var showFavouritesView: Bool
-    
-    var body: some View {
-        Menu {
-            Button(action: {
-                showFavouritesView.toggle()
-            }) {
-                Label("Favourites".localized, systemImage: "star.fill")
-            }
-            .disabled(!appData.isAuthenticated)
-            
-            Button(action: {
-                showHistoryView.toggle()
-            }) {
-                Label("Downgrade History".localized, systemImage: "clock.arrow.circlepath")
-            }
-            .disabled(!appData.isAuthenticated)
-            
-            Button(action: {
-                let tempDir = FileManager.default.temporaryDirectory
-                let tempIPAURL = tempDir.appendingPathComponent("app.ipa")
-                presentShareSheet(with: tempIPAURL)
-            }) {
-                Label("Export IPA".localized, systemImage: "arrow.up.doc")
-            }
-            .disabled(!appData.hasAppBeenServed)
-            
-            Button(action: {
-                Haptic.shared.play(.heavy)
-                DispatchQueue.main.asyncAfter(deadline: .now() + 0.25) {
-                    EncryptedKeychainWrapper.nuke()
-                    EncryptedKeychainWrapper.generateAndStoreKey()
-                    sleep(3)
-                    exitinator()
-                }
-            }) {
-                ButtonLabel(text: "Log Out".localized, icon: "arrow.right")
-            }
-            .disabled(!appData.isAuthenticated)
-        } label: {
-            Image(systemName: "line.horizontal.3")
-        }
-    }
-}
-
-struct DowngradeHistoryView: View {
-    @EnvironmentObject var appData: AppData
-    @Environment(\.dismiss) private var dismiss
-    
-    var body: some View {
-        NavigationStack {
-            List {
-                Section(header: HeaderLabel(text: "Downgrade History".localized, icon: "clock.arrow.circlepath")) {
-                    if appData.downgradeHistory.isEmpty {
-                        VStack(alignment: .leading, spacing: 4) {
-                            Text("No Downgrades Yet".localized)
-                                .font(.headline)
-                            Text("No Downgrades Description".localized)
-                                .font(.subheadline)
-                                .foregroundStyle(.secondary)
-                        }
-                    } else {
-                        ForEach(appData.downgradeHistory) { entry in
-                            DowngradeHistoryCell(entry: entry)
-                        }
-                    }
-                }
-            }
-            .navigationTitle("History".localized)
-            .toolbar {
-                ToolbarItem(placement: .topBarTrailing) {
-                    Button(action: {
-                        dismiss()
-                    }) {
-                        Image(systemName: "xmark")
-                    }
-                }
-            }
-        }
-    }
-}
-
-struct DowngradeHistoryCell: View {
-    let entry: DowngradeHistoryEntry
-    
-    private static let dateFormatter: DateFormatter = {
-        let formatter = DateFormatter()
-        formatter.dateStyle = .medium
-        formatter.timeStyle = .short
-        return formatter
-    }()
-    
-    var body: some View {
-        VStack(alignment: .leading, spacing: 10) {
-            HStack(alignment: .top) {
-                Image(systemName: "arrow.down.app")
-                    .frame(width: 22, height: 22, alignment: .center)
-                VStack(alignment: .leading, spacing: 4) {
-                    Text(entry.bundleId)
-                        .font(.headline)
-                    Text("Version \(entry.installedVersion)")
-                        .font(.subheadline)
-                        .foregroundStyle(.secondary)
-                    Text(Self.dateFormatter.string(from: entry.date))
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                    Text(entry.dataNote)
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                }
-            }
-        }
-        .padding(.vertical, 4)
-    }
 }
 
 struct ItemInfoCell: View {
@@ -361,17 +165,6 @@ struct ItemInfoCell: View {
             }) {
                 Label("Copy Value".localized, systemImage: "character.cursor.ibeam")
             }
-        }
-    }
-}
-
-struct SidebarToggleModifier: ViewModifier {
-    func body(content: Content) -> some View {
-        if #available(iOS 17.0, *) {
-            content
-                .toolbar(removing: .sidebarToggle)
-        } else {
-            content
         }
     }
 }
