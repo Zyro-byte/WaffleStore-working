@@ -6,6 +6,8 @@ on:
     paths:
       - '.github/workflows/publish-ipa.yml'
       - 'WaffleStore.xcodeproj/project.pbxproj'
+      - 'WaffleStore/MapleSyrup/**'
+      - 'MapleSyrup/SAPKit/**'
   workflow_dispatch:
 
 permissions:
