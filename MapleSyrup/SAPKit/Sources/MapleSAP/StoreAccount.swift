@@ -76,7 +76,7 @@ public enum AuthenticationEndpoint {
         let path = "/WebObjects/MZFinance.woa/wa/authenticate"
         let legacy = (host == "buy.itunes.apple.com" || host.hasSuffix("-buy.itunes.apple.com")) && [path, path + "/"].contains(url.path)
         let native = host == "auth.itunes.apple.com" && ["/auth/v1/native/fast", "/auth/v1/native/fast/"].contains(url.path)
-        guard (legacy || native), url.query == nil,
+        guard (legacy || native), (native ? url.query == nil : true),
               URLComponents(url: url, resolvingAgainstBaseURL: false)?.percentEncodedPath == url.path
         else { throw AuthenticationError.invalidRedirect }
         return url
