@@ -19,6 +19,7 @@ extension AppData {
             defer { isAuthenticating = false; authenticationTask = nil }
             var preparation: PreparedAppleLogin?
             var keepPrepared = false
+            var lastAuthenticationStage = "preparing"
             do {
                 try Task.checkCancellation()
                 // Reject invalid codes before creating a guest or contacting Apple.
@@ -38,6 +39,8 @@ extension AppData {
                 let authentication = AppleAuthentication(transport: prepared.loginTransport, signer: signer,
                     persistence: KeychainStoreAccount(), diagnostic: { event in
                         await MainActor.run {
+                            // Authentication diagnostics contain fixed metadata only; never print request bodies, URLs, cookies or credentials.
+                            print("Apple authentication diagnostic: \(event)")
                             if event.hasPrefix("authentication-recovery-attempt=") {
                                 self.authenticationRecovery = "Automatic attempt " + event.replacingOccurrences(of: "authentication-recovery-attempt=", with: "")
                             }
@@ -48,7 +51,10 @@ extension AppData {
                     identity: prepared.identity, endpoint: endpoint, resolvedEndpoint: { endpoint in
                         await MainActor.run { prepared.endpoint = endpoint }
                     }) { stage in
-                        await MainActor.run { self.setAuthenticationStage(stage) }
+                        await MainActor.run {
+                            lastAuthenticationStage = stage.rawValue
+                            self.setAuthenticationStage(stage)
+                        }
                     }
                 try Task.checkCancellation()
                 switch outcome {
@@ -74,6 +80,11 @@ extension AppData {
                         }
                     }
                 }
+                // Error domain and numeric code help distinguish Foundation/URLSession failures
+                // from Apple protocol failures without exposing potentially sensitive error text.
+                let nsError = error as NSError
+                let safeDomain = ["NSURLErrorDomain", "NSCocoaErrorDomain", "NSPOSIXErrorDomain", "NSOSStatusErrorDomain"].contains(nsError.domain) ? nsError.domain : "other"
+                print("Apple authentication failure: stage=\(lastAuthenticationStage); category=\(ResponseDiagnostic.category(error)); domain=\(safeDomain); code=\(nsError.code); 2fa=\(!verification.isEmpty)")
                 // Apple/SAP errors have sanitized, bounded descriptions. Arbitrary
                 // URL errors can include routing secrets: expose only numeric codes.
                 if let error = error as? AuthenticationError { authenticationError = error.localizedDescription }
@@ -81,7 +92,7 @@ extension AppData {
                 else { authenticationError = "Sign-in failed (code \((error as NSError).code))." }
                 code = ""
                 applicationStatus = "Sign-in failed."
-                print("Apple sign-in failed (code \((error as NSError).code)).")
+                // The structured failure line above replaces the ambiguous code-only log.
             }
             if let preparation {
                 if keepPrepared, !Task.isCancelled, preparation.canReuse(for: email), preparedAppleLogin === preparation {
