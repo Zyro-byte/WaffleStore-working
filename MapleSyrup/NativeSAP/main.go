@@ -10,6 +10,9 @@ package main
 import "C"
 import (
 	"context"
+ "errors"
+ "net"
+ "strings"
 	"encoding/json"
 	"github.com/majd/ipatool/v2/internal/sap/assets"
 	"github.com/majd/ipatool/v2/internal/sap/machine"
@@ -32,6 +35,32 @@ var nextHandle uint64
 // Statuses deliberately expose stages, never guest buffers, tokens or URLs.
 // 1 arguments; 2 assets; 3 emulator; 4 init; 5 exchange; 6 sign; 7 handle.
 //
+// Preserve only safe categories, not potentially sensitive underlying URLs.
+func assetFailure(err error) C.int {
+    if errors.Is(err, context.DeadlineExceeded) || errors.Is(err, context.Canceled) { return 21 }
+    var networkError net.Error
+    if errors.As(err, &networkError) { return 21 }
+    message := strings.ToLower(err.Error())
+    switch {
+    case strings.Contains(message, "integrity"), strings.Contains(message, "failed integrity"),
+         strings.Contains(message, "expected"), strings.Contains(message, "verify"):
+        return 22
+    case strings.Contains(message, "cache apple sap assets"), strings.Contains(message, "create sap asset cache"),
+         strings.Contains(message, "write cached"), strings.Contains(message, "install cache"):
+        return 23
+    case strings.Contains(message, "payload"), strings.Contains(message, "archive"),
+         strings.Contains(message, "xar"), strings.Contains(message, "cpio"):
+        return 24
+    case strings.Contains(message, "fetch apple software update"), strings.Contains(message, "open apple software update"),
+         strings.Contains(message, "measure apple software update"), strings.Contains(message, "connection"),
+         strings.Contains(message, "timeout"), strings.Contains(message, "deadline"),
+         strings.Contains(message, "no such host"), strings.Contains(message, "tls"):
+        return 21
+    default:
+        return 2
+    }
+}
+
 //export WaffleSAPOpen
 func WaffleSAPOpen(cache *C.char, hardware *C.uchar, length C.size_t, handle *C.uint64_t) C.int {
 	mutex.Lock()
@@ -44,11 +73,11 @@ func WaffleSAPOpen(cache *C.char, hardware *C.uchar, length C.size_t, handle *C.
 		return 1
 	}
 	assets.CacheRoot = directory // Explicit app sandbox path; no home/system fallback.
-	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
+	ctx, cancel := context.WithTimeout(context.Background(), 8*time.Minute)
 	defer cancel()
 	bundle, err := assets.Load(ctx)
 	if err != nil {
-		return 2
+		return assetFailure(err)
 	}
 	m, err := machine.Open(ctx, bundle)
 	if err != nil {
@@ -128,11 +157,11 @@ func WaffleSAPKBSync(cache *C.char, hardware *C.uchar, length C.size_t, dsid C.u
 	if assets.CacheRoot == "" {
 		return 1
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
+	ctx, cancel := context.WithTimeout(context.Background(), 8*time.Minute)
 	defer cancel()
 	bundle, err := assets.Load(ctx)
 	if err != nil {
-		return 2
+		return assetFailure(err)
 	}
 	data, err := machine.GenerateKBSync(ctx, bundle, C.GoBytes(unsafe.Pointer(hardware), 6), uint64(dsid))
 	if err != nil || len(data) == 0 || len(data) > 16<<20 {
