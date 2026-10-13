@@ -30,7 +30,7 @@ public enum SAPError: Error, LocalizedError, Equatable {
             case 24: return "SAP assets could not be saved to or read from the app cache. Check available storage."
             case 25: return "Apple's SAP asset package could not be downloaded or extracted. Retry later."
             case 2: return "SAP assets could not be loaded (unknown cause)."
-            default: return "SAP native runtime failed at stage \\(stage) (1 arguments; 2 assets; 3 emulator; 4 initialization; 5 exchange; 6 signing; 7 handle)."
+            default: return "SAP native runtime failed at stage \(stage) (1 arguments; 2 assets; 3 emulator; 4 initialization; 5 exchange; 6 signing; 7 handle)."
             }
         }
     }
