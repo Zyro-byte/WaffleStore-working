@@ -23,6 +23,24 @@ final class AuthenticationTests: XCTestCase {
                 code: code, identity: identity, endpoint: endpoint)
     }
 
+
+    func testNativeFastRequiresCanonicalTrailingSlashAndUsesPlistContentType() async throws {
+        let canonical = URL(string: "https://auth.itunes.apple.com/auth/v1/native/fast/")!
+        XCTAssertEqual(try AuthenticationEndpoint.validate(canonical), canonical)
+        XCTAssertThrowsError(try AuthenticationEndpoint.validate(URL(string: "https://auth.itunes.apple.com/auth/v1/native/fast")!))
+        XCTAssertThrowsError(try AuthenticationEndpoint.validate(URL(string: "https://auth.itunes.apple.com/auth/v1/native/fast/?next=1")!))
+        let transport = FixtureAuthenticationTransport([.http(200, try success(), responseHeaders)])
+        let auth = AppleAuthentication(transport: transport, signer: FixtureSigner(), persistence: FixtureAccountStore())
+        _ = try await auth.login(email: "fixture@example.test", password: "secret", code: "123456",
+            identity: identity, endpoint: canonical)
+        let requests = await transport.requests
+        XCTAssertEqual(requests.first?.url, canonical)
+        XCTAssertEqual(requests.first?.value(forHTTPHeaderField: "Content-Type"), "application/x-apple-plist")
+        let body = try XCTUnwrap(requests.first?.httpBody)
+        let parsed = try PropertyListSerialization.propertyList(from: body, format: nil) as! [String: String]
+        XCTAssertEqual(parsed["attempt"], "2")
+    }
+
     func testSignedPlistHasModernFieldsAndStoresNoPasswordOrCode() async throws {
         let transport = FixtureAuthenticationTransport([.http(200, try success(), responseHeaders)])
         let signer = FixtureSigner(); let store = FixtureAccountStore()
@@ -36,7 +54,7 @@ final class AuthenticationTests: XCTestCase {
         XCTAssertEqual(requests[0].value(forHTTPHeaderField: "Content-Type"), "application/x-www-form-urlencoded")
         let parsed = try PropertyListSerialization.propertyList(from: body, format: nil) as! [String: String]
         XCTAssertEqual(parsed, ["appleId": "fixture@example.test", "password": "p<&>secret123456", "guid": identity.guid,
-                                "attempt": "1", "rmp": "0", "why": "signIn"])
+                                "attempt": "2", "rmp": "0", "why": "signIn"])
         XCTAssertEqual(account.dsid, "123456789"); XCTAssertEqual(account.pod, "42")
         XCTAssertEqual(account.authenticationURL, endpoint)
         XCTAssertEqual(try store.load(), account)
@@ -82,6 +100,7 @@ final class AuthenticationTests: XCTestCase {
         XCTAssertEqual(signer.bodies.count, 3) // fresh signing, including 2FA
         let payload = try PropertyListSerialization.propertyList(from: requests[2].httpBody!, format: nil) as! [String: String]
         XCTAssertEqual(payload["password"], "secret123456")
+        XCTAssertEqual(payload["attempt"], "2")
     }
 
     func testSigningTimeAndRedirectsShareOneRecoveryDeadline() async throws {
@@ -195,9 +214,9 @@ final class AuthenticationTests: XCTestCase {
             do { _ = try await login(transport, sleeps: sleeps); XCTFail("Accepted HTTP \(status)") }
             catch { XCTAssertEqual(error as? AuthenticationError, status == 429 ? .rateLimited : .http(status)) }
             let requests = await transport.requests
-            XCTAssertEqual(requests.count, 3)
+            XCTAssertEqual(requests.count, status == 429 ? 1 : status == 204 ? 2 : 3)
             XCTAssertTrue(requests.allSatisfy { $0.httpBody == requests[0].httpBody })
-            let delays = await sleeps.values; XCTAssertEqual(delays, [10, 20])
+            let delays = await sleeps.values; XCTAssertEqual(delays, status == 429 ? [] : status == 204 ? [10] : [10, 20])
         }
     }
 
@@ -227,7 +246,7 @@ final class AuthenticationTests: XCTestCase {
             _ = try await AppleAuthentication(transport: rate, signer: FixtureSigner(), persistence: FixtureAccountStore(), automaticRecovery: true, sleep: { _ in })
                 .login(email: "fixture@example.test", password: "secret", identity: identity, endpoint: endpoint)
             XCTFail("Ignored Apple retry deadline")
-        } catch { XCTAssertEqual(error as? AuthenticationError, .retryLater) }
+        } catch { XCTAssertEqual(error as? AuthenticationError, .rateLimited) }
         let rateRequests = await rate.requests
         XCTAssertEqual(rateRequests.count, 1)
     }
@@ -241,10 +260,10 @@ final class AuthenticationTests: XCTestCase {
 
     func testRetryAfterHonorsAppleDeadlineAndRejectsWaitOverBudget() async throws {
         let sleeps = FixtureSleeps()
-        _ = try await login(FixtureAuthenticationTransport([.http(429, Data(), ["Retry-After": "2"]), .http(200, try success(), responseHeaders)]), sleeps: sleeps)
+        _ = try await login(FixtureAuthenticationTransport([.http(503, Data(), ["Retry-After": "2"]), .http(200, try success(), responseHeaders)]), sleeps: sleeps)
         let delays = await sleeps.values; XCTAssertEqual(delays, [2])
         for value in ["31", "99999999999999999999999999999999"] {
-            let transport = FixtureAuthenticationTransport([.http(429, Data(), ["Retry-After": value])])
+            let transport = FixtureAuthenticationTransport([.http(503, Data(), ["Retry-After": value])])
             do { _ = try await login(transport); XCTFail("Retried too early") }
             catch { XCTAssertEqual(error as? AuthenticationError, .retryLater) }
             let requests = await transport.requests; XCTAssertEqual(requests.count, 1)

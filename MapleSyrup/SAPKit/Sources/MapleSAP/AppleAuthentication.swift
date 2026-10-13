@@ -84,7 +84,8 @@ public struct AppleAuthentication {
         let code = try TwoFactorAuthentication.normalize(code)
         var endpoint = try AuthenticationEndpoint.validate(endpoint)
         let deadline = recoveryWindow.map { now().addingTimeInterval($0) }
-        var logicalAttempt = 1
+        // Apple Configurator sends attempt=2 when verifying the six-digit code.
+        var logicalAttempt = code.isEmpty ? 1 : 2
         var redirects = 0
         var body = try payload(email: email, password: password, code: code, guid: identity.guid, attempt: logicalAttempt)
         while true {
@@ -163,7 +164,7 @@ public struct AppleAuthentication {
             var request = URLRequest(url: endpoint)
             if let deadline { request.timeoutInterval = max(1, min(30, deadline.timeIntervalSince(now()))) }
             request.httpMethod = "POST"; request.httpBody = body
-            request.setValue("application/x-www-form-urlencoded", forHTTPHeaderField: "Content-Type")
+            request.setValue(endpoint.host == "auth.itunes.apple.com" ? "application/x-apple-plist" : "application/x-www-form-urlencoded", forHTTPHeaderField: "Content-Type")
             request.setValue(SAPProtocol.userAgent, forHTTPHeaderField: "User-Agent")
             request.setValue("close", forHTTPHeaderField: "Connection")
             let signature = try await signer.actionSignature(body: body)
@@ -189,6 +190,12 @@ public struct AppleAuthentication {
                 let status = response.statusCode
                 if populated || (300..<400).contains(status) || status == 200 { return (data, response) }
                 guard [204, 404, 429].contains(status) || status / 100 == 5 else { throw AuthenticationError.invalidResponse(status) }
+                // A 429 is a server-side throttle. Retrying the same signed request
+                // immediately can extend the block, even without Retry-After.
+                if status == 429 { throw AuthenticationError.rateLimited }
+                // Repeated 204/403 edge replies have been observed even in upstream
+                // ipatool. One recovery probe is enough; do not hammer the edge.
+                if status == 204 && attempt >= 2 { throw AuthenticationError.http(status) }
                 guard attempt < recoveryAttempts else { throw status == 429 ? AuthenticationError.rateLimited : AuthenticationError.http(status) }
                 let delay = try retryDelay(response.value(forHTTPHeaderField: "Retry-After"), attempt: attempt)
                 if let deadline, now().addingTimeInterval(delay) >= deadline { throw status == 429 ? AuthenticationError.rateLimited : AuthenticationError.http(status) }

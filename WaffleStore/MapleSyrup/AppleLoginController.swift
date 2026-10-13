@@ -28,9 +28,8 @@ extension AppData {
                 if verification.isEmpty, let existing = preparedAppleLogin, existing.canReuse(for: email) {
                     prepared = existing
                 } else {
-                    // ipatool starts a fresh login for the supplied 2FA code. Do not reuse
-                // the pre-challenge SAP guest, network connections or endpoint state.
-                // A new preparation retains only validated challenge cookies.
+                    // A new login for 2FA must not reuse the pre-challenge SAP guest.
+                    // Carry only validated challenge cookies.
                 if let existing = preparedAppleLogin { await existing.close() }
                     preparedAppleLogin = nil
                     prepared = try PreparedAppleLogin(email: email, cookies: challengeCookies)
@@ -230,8 +229,9 @@ final class PreparedAppleLogin {
         // The destination remains subject to the same strict credential endpoint allowlist.
         let bagURL = configuration.authenticationURL
         let preferredURL = bagURL.path.contains("MZFinance.woa/wa/authenticate")
-            ? URL(string: "https://auth.itunes.apple.com/auth/v1/native/fast")!
-            : bagURL
+            ? URL(string: "https://auth.itunes.apple.com/auth/v1/native/fast/")!
+            : (bagURL.host == "auth.itunes.apple.com" && ["/auth/v1/native", "/auth/v1/native/"].contains(bagURL.path)
+                ? URL(string: "https://auth.itunes.apple.com/auth/v1/native/fast/")! : bagURL)
         endpoint = try AuthenticationEndpoint.validate(preferredURL)
         print("Apple authentication route: \(preferredURL.host == "auth.itunes.apple.com" ? "native-fast" : "store-bag")")
         progress(.sap)
