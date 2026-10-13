@@ -24,6 +24,20 @@ final class AuthenticationTests: XCTestCase {
     }
 
 
+    func testStoreBagEndpointNormalizationPreservesLegacyAndCanonicalizesNative() throws {
+        let legacy = URL(string: "https://buy.itunes.apple.com/WebObjects/MZFinance.woa/wa/authenticate")!
+        XCTAssertEqual(try AuthenticationEndpoint.normalizedBagEndpoint(legacy), legacy)
+        for path in ["/auth/v1/native", "/auth/v1/native/", "/auth/v1/native/fast", "/auth/v1/native/fast/"] {
+            let source = URL(string: "https://auth.itunes.apple.com" + path)!
+            XCTAssertEqual(try AuthenticationEndpoint.normalizedBagEndpoint(source).absoluteString,
+                           "https://auth.itunes.apple.com/auth/v1/native/fast/")
+        }
+        XCTAssertThrowsError(try AuthenticationEndpoint.normalizedBagEndpoint(
+            URL(string: "https://evil.example/auth/v1/native/")!))
+        XCTAssertThrowsError(try AuthenticationEndpoint.normalizedBagEndpoint(
+            URL(string: "https://auth.itunes.apple.com/auth/v1/native/?redirect=evil")!))
+    }
+
     func testNativeFastRequiresCanonicalTrailingSlashAndUsesPlistContentType() async throws {
         let canonical = URL(string: "https://auth.itunes.apple.com/auth/v1/native/fast/")!
         XCTAssertEqual(try AuthenticationEndpoint.validate(canonical), canonical)
