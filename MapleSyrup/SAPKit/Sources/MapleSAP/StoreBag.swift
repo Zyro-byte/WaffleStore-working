@@ -22,7 +22,15 @@ public enum SAPError: Error, LocalizedError, Equatable {
         case .invalidState: return "SAP operation called in an invalid session state."
         case .emptySignature: return "SAP runtime returned an empty signature."
         case .keychain(let status): return "Keychain operation failed (OSStatus \(status))."
-        case .nativeRuntime(let stage): return "SAP native runtime failed at stage \(stage) (1 arguments; 2 assets; 3 emulator; 4 initialization; 5 exchange; 6 signing; 7 handle)."
+        case .nativeRuntime(let stage):
+            switch stage {
+            case 2: return "SAP asset loading failed. Check network access and storage."
+            case 21: return "SAP asset download failed or timed out. Check Apple CDN connectivity."
+            case 22: return "SAP asset integrity verification failed."
+            case 23: return "SAP asset cache write failed. Check free storage."
+            case 24: return "SAP asset archive extraction failed."
+            default: return "SAP native runtime failed (stage " + String(stage) + ")."
+            }
         }
     }
 }
