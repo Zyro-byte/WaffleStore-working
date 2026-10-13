@@ -224,7 +224,13 @@ final class PreparedAppleLogin {
         guard !closed else { throw CancellationError() }
         if let signer { progress(.prepared); return signer }
         progress(.bag)
-        let configuration = try await SAPProtocol(transport: sapTransport).bag(identity: identity)
+        let configuration: SAPConfiguration
+        do {
+            configuration = try await SAPProtocol(transport: sapTransport).bag(identity: identity)
+        } catch {
+            print("Apple authentication diagnostic: preparation-failure=store-bag-fetch-or-parse; error-type=\(error is SAPError ? "sap" : "transport")")
+            throw error
+        }
         // Prefer the native Apple auth service when Store Bag still advertises the retired MZFinance route.
         // The destination remains subject to the same strict credential endpoint allowlist.
         let bagURL = configuration.authenticationURL
@@ -232,7 +238,15 @@ final class PreparedAppleLogin {
             ? URL(string: "https://auth.itunes.apple.com/auth/v1/native/fast/")!
             : (bagURL.host == "auth.itunes.apple.com" && ["/auth/v1/native", "/auth/v1/native/"].contains(bagURL.path)
                 ? URL(string: "https://auth.itunes.apple.com/auth/v1/native/fast/")! : bagURL)
-        endpoint = try AuthenticationEndpoint.validate(preferredURL)
+        do {
+            endpoint = try AuthenticationEndpoint.validate(preferredURL)
+        } catch {
+            // Log only the route family, never the URL, query or account data.
+            let route = bagURL.path.contains("MZFinance.woa/wa/authenticate") ? "legacy" :
+                (bagURL.host == "auth.itunes.apple.com" ? "native-auth" : "other-apple-pod")
+            print("Apple authentication diagnostic: preparation-failure=credential-endpoint-validation; bag-route=\(route)")
+            throw error
+        }
         print("Apple authentication route: \(preferredURL.host == "auth.itunes.apple.com" ? "native-fast" : "store-bag")")
         progress(.sap)
         let created = try SAPSession(guest: NativeSAPGuest(), transport: sapTransport)
