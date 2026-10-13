@@ -10,6 +10,9 @@ package main
 import "C"
 import (
 	"context"
+	"errors"
+	"net"
+	"os"
 	"encoding/json"
 	"github.com/majd/ipatool/v2/internal/sap/assets"
 	"github.com/majd/ipatool/v2/internal/sap/machine"
@@ -30,7 +33,17 @@ var guests = map[uint64]*guest{}
 var nextHandle uint64
 
 // Statuses deliberately expose stages, never guest buffers, tokens or URLs.
-// 1 arguments; 2 assets; 3 emulator; 4 init; 5 exchange; 6 sign; 7 handle.
+// 1 arguments; 2 assets (unspecified); 3 emulator; 4 init; 5 exchange; 6 sign; 7 handle.
+// 21 asset deadline; 22 asset network; 23 asset filesystem; 24 asset other.
+// Error details are intentionally not exported: paths and URLs stay private.
+func assetFailure(err error) C.int {
+	if errors.Is(err, context.DeadlineExceeded) { return 21 }
+	var networkError net.Error
+	if errors.As(err, &networkError) { return 22 }
+	if errors.Is(err, os.ErrPermission) || errors.Is(err, os.ErrNotExist) { return 23 }
+	return 24
+}
+
 //
 //export WaffleSAPOpen
 func WaffleSAPOpen(cache *C.char, hardware *C.uchar, length C.size_t, handle *C.uint64_t) C.int {
@@ -44,11 +57,11 @@ func WaffleSAPOpen(cache *C.char, hardware *C.uchar, length C.size_t, handle *C.
 		return 1
 	}
 	assets.CacheRoot = directory // Explicit app sandbox path; no home/system fallback.
-	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Minute)
 	defer cancel()
 	bundle, err := assets.Load(ctx)
 	if err != nil {
-		return 2
+		return assetFailure(err)
 	}
 	m, err := machine.Open(ctx, bundle)
 	if err != nil {
