@@ -225,14 +225,11 @@ final class PreparedAppleLogin {
         if let signer { progress(.prepared); return signer }
         progress(.bag)
         let configuration = try await SAPProtocol(transport: sapTransport).bag(identity: identity)
-        // Prefer the native Apple auth service when Store Bag still advertises the retired MZFinance route.
-        // The destination remains subject to the same strict credential endpoint allowlist.
-        let bagURL = configuration.authenticationURL
-        let preferredURL = bagURL.path.contains("MZFinance.woa/wa/authenticate")
-            ? URL(string: "https://auth.itunes.apple.com/auth/v1/native/fast/")!
-            : (bagURL.host == "auth.itunes.apple.com" && ["/auth/v1/native", "/auth/v1/native/"].contains(bagURL.path)
-                ? URL(string: "https://auth.itunes.apple.com/auth/v1/native/fast/")! : bagURL)
-        endpoint = try AuthenticationEndpoint.validate(preferredURL)
+        // Use the trusted Store Bag route, normalizing only Apple's native
+        // variants. A legacy route remains legacy rather than silently switching
+        // the account to an unrelated authentication service.
+        let preferredURL = try AuthenticationEndpoint.normalizedBagEndpoint(configuration.authenticationURL)
+        endpoint = preferredURL
         print("Apple authentication route: \(preferredURL.host == "auth.itunes.apple.com" ? "native-fast" : "store-bag")")
         progress(.sap)
         let created = try SAPSession(guest: NativeSAPGuest(), transport: sapTransport)
