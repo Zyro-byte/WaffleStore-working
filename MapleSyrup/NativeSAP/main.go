@@ -49,6 +49,31 @@ func assetFailureCode(err error) C.int {
     }
 }
 
+// Retry only transient fetch failures; integrity and filesystem failures must
+// never be bypassed. Both attempts share the same bounded two-minute deadline.
+func loadSAPAssets(ctx context.Context) (assets.Bundle, C.int) {
+    bundle, err := assets.Load(ctx)
+    if err == nil {
+        return bundle, 0
+    }
+    code := assetFailureCode(err)
+    if code != 21 && code != 22 && code != 25 {
+        return assets.Bundle{}, code
+    }
+    timer := time.NewTimer(2 * time.Second)
+    defer timer.Stop()
+    select {
+    case <-ctx.Done():
+        return assets.Bundle{}, 21
+    case <-timer.C:
+    }
+    bundle, err = assets.Load(ctx)
+    if err != nil {
+        return assets.Bundle{}, assetFailureCode(err)
+    }
+    return bundle, 0
+}
+
 type guest struct {
 	machine  *machine.Machine
 	context  uint64
@@ -76,9 +101,9 @@ func WaffleSAPOpen(cache *C.char, hardware *C.uchar, length C.size_t, handle *C.
 	assets.CacheRoot = directory // Explicit app sandbox path; no home/system fallback.
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
 	defer cancel()
-	bundle, err := assets.Load(ctx)
-	if err != nil {
-		return assetFailureCode(err)
+	bundle, assetStatus := loadSAPAssets(ctx)
+	if assetStatus != 0 {
+		return assetStatus
 	}
 	m, err := machine.Open(ctx, bundle)
 	if err != nil {
@@ -160,9 +185,9 @@ func WaffleSAPKBSync(cache *C.char, hardware *C.uchar, length C.size_t, dsid C.u
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
 	defer cancel()
-	bundle, err := assets.Load(ctx)
-	if err != nil {
-		return assetFailureCode(err)
+	bundle, assetStatus := loadSAPAssets(ctx)
+	if assetStatus != 0 {
+		return assetStatus
 	}
 	data, err := machine.GenerateKBSync(ctx, bundle, C.GoBytes(unsafe.Pointer(hardware), 6), uint64(dsid))
 	if err != nil || len(data) == 0 || len(data) > 16<<20 {
