@@ -11,6 +11,10 @@ import "C"
 import (
 	"context"
 	"encoding/json"
+	"errors"
+	"net"
+	"os"
+	"strings"
 	"github.com/majd/ipatool/v2/internal/sap/assets"
 	"github.com/majd/ipatool/v2/internal/sap/machine"
 	"github.com/majd/ipatool/v2/wafflebridge/packageipa"
@@ -18,6 +22,32 @@ import (
 	"time"
 	"unsafe"
 )
+
+// Asset loader errors are classified without exposing URLs, local paths or
+// raw network error messages to the Swift UI.
+func assetFailureCode(err error) C.int {
+    if errors.Is(err, context.DeadlineExceeded) || errors.Is(err, context.Canceled) || os.IsTimeout(err) {
+        return 21
+    }
+    var netErr net.Error
+    if errors.As(err, &netErr) {
+        return 22
+    }
+    message := strings.ToLower(err.Error())
+    switch {
+    case strings.Contains(message, "integrity"), strings.Contains(message, "sha-256"),
+        strings.Contains(message, "failed integrity"), strings.Contains(message, "expected"):
+        return 23
+    case strings.Contains(message, "cache"), strings.Contains(message, "permission denied"),
+        strings.Contains(message, "read-only file system"):
+        return 24
+    case strings.Contains(message, "apple software update"), strings.Contains(message, "payload"),
+        strings.Contains(message, "archive"), strings.Contains(message, "http"), strings.Contains(message, "fetch"):
+        return 25
+    default:
+        return 2
+    }
+}
 
 type guest struct {
 	machine  *machine.Machine
@@ -48,7 +78,7 @@ func WaffleSAPOpen(cache *C.char, hardware *C.uchar, length C.size_t, handle *C.
 	defer cancel()
 	bundle, err := assets.Load(ctx)
 	if err != nil {
-		return 2
+		return assetFailureCode(err)
 	}
 	m, err := machine.Open(ctx, bundle)
 	if err != nil {
@@ -132,7 +162,7 @@ func WaffleSAPKBSync(cache *C.char, hardware *C.uchar, length C.size_t, dsid C.u
 	defer cancel()
 	bundle, err := assets.Load(ctx)
 	if err != nil {
-		return 2
+		return assetFailureCode(err)
 	}
 	data, err := machine.GenerateKBSync(ctx, bundle, C.GoBytes(unsafe.Pointer(hardware), 6), uint64(dsid))
 	if err != nil || len(data) == 0 || len(data) > 16<<20 {
