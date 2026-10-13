@@ -32,6 +32,12 @@ for name in ['assets.go','storeagent.go']:
     if '"errors"' not in source: source=source.replace('import (', 'import (\n\t"errors"', 1)
     # os is still used for actual cache I/O, so the existing import stays.
     if name=='assets.go': source += '\n// Configured once by the sandboxed C bridge before any asset load.\nvar CacheRoot string\n'
+    if name=='assets.go':
+        # The pinned Apple package uses remote range reads plus a large bzip2
+        # stream. A cold iPhone cache can legitimately need more than 2 minutes.
+        old_timeout='Timeout:   2 * time.Minute,'
+        if source.count(old_timeout)!=1: raise SystemExit('Unexpected Apple SAP asset download timeout')
+        source=source.replace(old_timeout,'Timeout:   8 * time.Minute,')
     path.write_text(source)
 PY
 SDK=$(xcrun --sdk iphoneos --show-sdk-path)
