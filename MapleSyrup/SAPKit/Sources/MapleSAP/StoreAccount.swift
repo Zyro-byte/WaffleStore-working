@@ -82,6 +82,20 @@ public enum AuthenticationEndpoint {
         return url
     }
 
+    // Normalize only Apple's documented native authentication route variants.
+    // Do not invent a fallback host or send credentials to an untrusted URL.
+    public static func normalizedBagEndpoint(_ url: URL) throws -> URL {
+        _ = try SAPConfiguration.trustedAppleURL(url.absoluteString)
+        guard url.host?.lowercased() == "auth.itunes.apple.com",
+              url.query == nil else { return try validate(url) }
+        switch url.path {
+        case "/auth/v1/native", "/auth/v1/native/", "/auth/v1/native/fast":
+            return try validate(URL(string: "https://auth.itunes.apple.com/auth/v1/native/fast/")!)
+        default:
+            return try validate(url)
+        }
+    }
+
     public static func redirect(from base: URL, location: String) throws -> URL {
         let text = location.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !text.isEmpty, let url = URL(string: text, relativeTo: base)?.absoluteURL else {
