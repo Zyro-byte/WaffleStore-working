@@ -62,10 +62,12 @@ public struct SAPConfiguration: Equatable {
         let authURL = try trustedAppleURL(authentication)
         let host = authURL.host!.lowercased()
         let modern = (host == "auth.itunes.apple.com" || host.hasSuffix("-buy.itunes.apple.com")) &&
-            ["/auth/v1/native", "/auth/v1/native/"].contains(authURL.path)
-        // Some live Bags still advertise the legacy endpoint. Permit discovery
-        // for SAP-only diagnostics; no credentials are sent by this module.
-        let legacy = host == "buy.itunes.apple.com" && authURL.path == "/WebObjects/MZFinance.woa/wa/authenticate"
+            ["/auth/v1/native", "/auth/v1/native/", "/auth/v1/native/fast", "/auth/v1/native/fast/"].contains(authURL.path)
+        // A Store Bag may advertise the legacy buy host or a numbered buy pod.
+        // Accept these only as discovered metadata; credential destinations are
+        // independently validated by AuthenticationEndpoint.validate.
+        let legacy = (host == "buy.itunes.apple.com" || host.hasSuffix("-buy.itunes.apple.com")) &&
+            ["/WebObjects/MZFinance.woa/wa/authenticate", "/WebObjects/MZFinance.woa/wa/authenticate/"].contains(authURL.path)
         guard modern || legacy else { throw SAPError.invalidEndpoint }
         return SAPConfiguration(authenticationURL: authURL, setupURL: try trustedAppleURL(setup),
                                 certificateURL: try trustedAppleURL(certificate), version: version)

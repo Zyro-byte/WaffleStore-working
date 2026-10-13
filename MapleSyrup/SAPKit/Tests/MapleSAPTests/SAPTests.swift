@@ -27,6 +27,26 @@ final class SAPTests: XCTestCase {
         XCTAssertThrowsError(try SAPConfiguration.parse(bag: plist(["urlBag": [:]])))
     }
 
+    func testBagAcceptsKnownNativeFastAndPodRoutesWithoutRelaxingHostChecks() throws {
+        for address in [
+            "https://auth.itunes.apple.com/auth/v1/native/fast",
+            "https://auth.itunes.apple.com/auth/v1/native/fast/",
+            "https://p42-buy.itunes.apple.com/auth/v1/native/",
+            "https://p42-buy.itunes.apple.com/WebObjects/MZFinance.woa/wa/authenticate",
+            "https://buy.itunes.apple.com/WebObjects/MZFinance.woa/wa/authenticate/"
+        ] {
+            let configuration = try SAPConfiguration.parse(bag: bag(["authenticateAccount": address]))
+            XCTAssertEqual(configuration.authenticationURL.absoluteString, address)
+        }
+        for address in [
+            "https://auth.itunes.apple.com/other",
+            "https://evil-buy.itunes.apple.com.evil.test/auth/v1/native/",
+            "http://auth.itunes.apple.com/auth/v1/native/fast/"
+        ] {
+            XCTAssertThrowsError(try SAPConfiguration.parse(bag: bag(["authenticateAccount": address])))
+        }
+    }
+
     func testEndpointsCannotLeakSetupToUntrustedHosts() throws {
         for value in ["http://play.itunes.apple.com/setup", "https://apple.com.evil.test/setup",
                       "https://user:secret@play.itunes.apple.com/setup", "https://play.itunes.apple.com:444/setup"] {
